@@ -1,49 +1,102 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>leaflet-map-simple</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta charset="utf-8">
+function tileToCoord(x, y, z) {
+    let n = Math.PI - 2 * Math.PI * y / Math.pow(2, z);
 
-  <!-- Load Leaflet code library: see https://leafletjs.com/download.html -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" integrity="sha256-sA+zWATbFveLLNqWO2gtiw3HL/lh1giY/Inf1BJ0z14=" crossorigin="" />
-  <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js" integrity="sha256-o9N1jGDZrf5tS+Ft4gbIK7mYMipq9lqpVJ91xHSyKhg=" crossorigin=""></script>
+    return [
+        (180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))),
+        (x / Math.pow(2, z) * 360 - 180)
+    ];
+}
 
-  <!-- Position the map and title with Cascading Style Sheet (CSS) -->
-  <style>
-  body { margin:0; padding:0; }
-  #map { position: absolute; top:0; bottom:0; right:0; left:0; }
-  #map-title { position: relative; margin-top: 10px; margin-left: 50px; float: left; background: white; border: 2px solid rgba(0,0,0,0.2); padding: 6px 8px; font-family: Helvetica; font-weight: bold; font-size: 24px; z-index: 800; }
-  </style>
-</head>
-<body>
 
-  <!-- Display the map and title with HTML division tags  -->
-  <div id="map-title">EDIT map title</div>
-  <div id="map"></div>
+$(document).ready(function () {
+    let map = L.map('map').setView([0, 0], 2);
 
-  <!-- Create the interactive map content with JavaScript (.js) -->
-  <script>
+    L.tileLayer(
+        'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="http://openstreetmap.org">OpenStreetMap</a> Contributors',
+            maxZoom: 18,
+        }).addTo(map);
 
-  /* Set up the initial map center and zoom level */
-  var map = L.map('map', {
-    center: [41.77, -72.69], // EDIT coordinates to re-center map
-    zoom: 12,  // EDIT from 1 (zoomed out) to 18 (zoomed in)
-    scrollWheelZoom: false
-  });
+    let markers = {};
+    let polys = {};
+    let cache_polys = [];
 
-  /* display basemap tiles -- see others at https://leaflet-extras.github.io/leaflet-providers/preview/ */
-  L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://osm.org/copyright">\
-        OpenStreetMap</a> contributors, &copy;\
-        <a href="https://carto.com/attribution">CARTO</a>'
-  }).addTo(map);
+    function showData() {
+        $.ajax({
+            url: "/getplayers"
+        }).done(function (data) {
+            for (let player of data) {
+                let marker = markers[player[0]] || L.marker([player[1], player[2]]).addTo(map);
+                markers[player[0]] = marker;
 
-  /* Display a point marker with pop-up text */
-  L.marker([41.77, -72.69]).addTo(map) // EDIT marker coordinates
-  .bindPopup("Insert pop-up text here"); // EDIT pop-up text message
+                marker.setLatLng(new L.LatLng(player[1], player[2]));
+            }
+        })
 
-  </script>
-</body>
-</html>
+        $.ajax({
+            url: "/getchunks"
+        }).done(function (data) {
+            for (let chunk of data) {
+                let s_id = chunk[0].toString() + ":" + chunk[1].toString();
+
+                let x = chunk[0];
+                let y = chunk[1];
+
+                if (!(s_id in polys)) {
+                    let polygon = L.polygon(tileToPoly(x, y), {
+                        // stroke: false,
+                        weight: 1,
+                        color: "#00ff00",
+                        fillOpacity: 0.2,
+                    }).addTo(map);
+
+                    polys[s_id] = polygon;
+                }
+            }
+        })
+    }
+
+    setInterval(showData, 10000);
+    showData();
+
+    let totalArea = 0;
+
+    require(["esri/geometry/support/geodesicUtils", "esri/geometry/Polygon"], function (geodesicUtils, Polygon) {
+        $.ajax({
+            url: "/cached"
+        }).done(function (data) {
+            for (let chunk of data) {
+
+                let polygon = L.polygon(chunk, {
+                    //stroke: false,
+                    color: "#ffff00",
+                    fillOpacity: 0.25,
+                }).addTo(map);
+
+                cache_polys.push(polygon);
+
+                let rings = chunk;
+                rings.push(rings[0]);
+
+                let poly = new Polygon({
+                    hazZ: false,
+                    hasM: false,
+                    "rings": rings,
+                })
+
+                totalArea += geodesicUtils.geodesicAreas([poly], "square-kilometers")[0];
+
+            }
+
+            console.log(totalArea);
+
+            $("#totalareakm").text(Math.round(totalArea).toString());
+            $("#totalareami").text(Math.round(totalArea * 0.386102).toString());
+
+            $("#cacheinfo").removeClass("hidden");
+            $("#cloading").remove();
+
+        })
+
+    })
+})
